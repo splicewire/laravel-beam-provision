@@ -18,6 +18,14 @@ namespace Splicewire\Beam\Provision;
  * `Destination` interface stayed provider-agnostic across both adapters with zero signature
  * changes — this field is where the real asymmetry between the two providers lives instead,
  * called out here rather than papered over.
+ *
+ * **A second, later wrinkle of the same shape** (gcp-cloud-run-provisioning map, ticket 10):
+ * `$image` is GCP-specific too. {@see LaravelCloudDestination} ignores it — Laravel Cloud builds
+ * from the repo itself. The OpenTofu-backed {@see CloudRunDestination} *requires* it — ticket 07's
+ * `cloud-run-service` module takes a pre-built Artifact Registry image URI as a plain input and
+ * does not build or push one (Cloud Run's git-integration isn't API-composable, per ticket 04).
+ * How a tenant's image actually gets built remains open fog on the map; this field is deliberately
+ * just the handle for whatever produces one, not a solution to that question.
  */
 final readonly class RepoRef
 {
@@ -26,5 +34,6 @@ final readonly class RepoRef
         public string $name,
         public string $branch = 'main',
         public ?string $connection = null,
+        public ?string $image = null,
     ) {}
 }

@@ -46,6 +46,23 @@ variable "cloudsql_connection_names" {
   default     = []
 }
 
+variable "network" {
+  type        = string
+  description = <<-EOT
+    VPC network *name* (not self-link) to reach via Direct VPC egress — required for the built-in
+    Cloud SQL Auth Proxy to actually dial a private-IP instance (found live, ticket 10: the proxy
+    times out without it). Null skips vpc_access entirely, for callers with no private-IP resources
+    to reach.
+  EOT
+  default     = null
+}
+
+variable "subnetwork" {
+  type        = string
+  description = "Subnetwork name within `network` for Direct VPC egress. Required alongside `network`."
+  default     = null
+}
+
 variable "service_account_email" {
   type        = string
   description = "Runtime service account for the Cloud Run service. Defaults to the project's default compute SA if null."

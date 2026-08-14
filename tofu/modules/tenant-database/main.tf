@@ -7,6 +7,11 @@ resource "google_sql_database_instance" "this" {
 
   settings {
     tier = var.tier
+    // Found live (ticket 10): GCP now defaults new Cloud SQL instances to ENTERPRISE_PLUS, which
+    // rejects legacy shared-core tiers like the pilot-cost `db-f1-micro` default below
+    // ("Invalid Tier for ENTERPRISE_PLUS Edition"). Pinned explicitly rather than switching the
+    // default tier to a pricier ENTERPRISE_PLUS one, to keep ticket 07's low-cost-pilot intent.
+    edition = "ENTERPRISE"
 
     ip_configuration {
       ipv4_enabled    = false
