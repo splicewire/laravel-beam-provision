@@ -8,6 +8,7 @@ use Splicewire\Beam\Provision\Console\ProvisionCommand;
 use Splicewire\Beam\Provision\Tofu\CabTokenMinter;
 use Splicewire\Beam\Provision\Tofu\TenantRootConfigRenderer;
 use Splicewire\Beam\Provision\Tofu\TofuApplyDispatcher;
+use Splicewire\Beam\Provision\Tofu\TofuModulesPath;
 
 /**
  * The provisioning-destination-seam provider. Ships one opt-in config file
@@ -28,7 +29,7 @@ class BeamProvisionServiceProvider extends ServiceProvider
 
         $this->app->singleton(CloudRunDestination::class, function ($app) {
             $config = $app['config']->get('beam-provision');
-            $modulesDir = dirname(__DIR__).'/tofu/modules';
+            $modulesDir = TofuModulesPath::dir();
 
             $tofu = new TofuApplyDispatcher(
                 runner: new NullRunner,
