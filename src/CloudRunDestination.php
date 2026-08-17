@@ -16,6 +16,7 @@ use Splicewire\Beam\Provision\Tofu\TenantDeployConfig;
 use Splicewire\Beam\Provision\Tofu\TenantRootConfigRenderer;
 use Splicewire\Beam\Provision\Tofu\TofuApplyDispatcher;
 use Splicewire\Beam\Provision\Tofu\TofuApplyRequest;
+use Splicewire\Beam\Provision\Tofu\TofuApplyResult;
 use Throwable;
 
 /**
@@ -82,7 +83,7 @@ class CloudRunDestination implements Destination
             $applyResult = $this->tofu->apply($destinationCredential, new TofuApplyRequest($tenantId, $this->rootConfigDirFor($tenantId)));
 
             if (! $applyResult->successful) {
-                throw new RuntimeException("CloudRunDestination::provision(): tofu apply failed for tenant `{$tenantId}` — see the underlying popcorn Result for diagnostics.");
+                throw new RuntimeException("CloudRunDestination::provision(): tofu apply failed for tenant `{$tenantId}`: {$this->diagnostics($applyResult)}");
             }
 
             $result = new ProvisionResult(
@@ -130,7 +131,7 @@ class CloudRunDestination implements Destination
         $result = $this->tofu->destroy($destinationCredential, new TofuApplyRequest($tenantId, $this->rootConfigDirFor($tenantId)));
 
         if (! $result->successful) {
-            throw new RuntimeException("CloudRunDestination::teardown(): tofu destroy failed for tenant `{$tenantId}` — see the underlying popcorn Result for diagnostics.");
+            throw new RuntimeException("CloudRunDestination::teardown(): tofu destroy failed for tenant `{$tenantId}`: {$this->diagnostics($result)}");
         }
 
         TornDown::dispatch(static::class, $appId);
@@ -187,5 +188,13 @@ class CloudRunDestination implements Destination
     private function runClient(string $token): PendingRequest
     {
         return Http::withToken($token)->asJson()->acceptJson()->baseUrl(self::RUN_BASE_URL)->timeout(120);
+    }
+
+    /** Surfaces the underlying popcorn Result's error/stderr instead of losing it to a generic message. */
+    private function diagnostics(TofuApplyResult $result): string
+    {
+        $popcorn = $result->popcornResult;
+
+        return trim(($popcorn->error ?? 'no error message').($popcorn->stderr !== '' ? " | stderr: {$popcorn->stderr}" : ''));
     }
 }
