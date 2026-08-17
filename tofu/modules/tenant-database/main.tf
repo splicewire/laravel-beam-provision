@@ -14,8 +14,16 @@ resource "google_sql_database_instance" "this" {
     edition = "ENTERPRISE"
 
     ip_configuration {
-      ipv4_enabled    = false
+      ipv4_enabled    = var.ipv4_enabled
       private_network = var.network
+
+      dynamic "authorized_networks" {
+        for_each = var.ipv4_enabled ? var.authorized_networks : []
+        content {
+          name  = authorized_networks.value.name
+          value = authorized_networks.value.cidr
+        }
+      }
     }
   }
 }
