@@ -12,7 +12,7 @@ use Splicewire\Beam\Provision\Tofu\TofuModulesPath;
 
 /**
  * The provisioning-destination-seam provider. Ships one opt-in config file
- * (`config/beam-provision.php`) plus a container binding for {@see CloudRunDestination} and the
+ * (`config/beam/provision.php`) plus a container binding for {@see CloudRunDestination} and the
  * {@see ProvisionCommand} that composes it — both new (gcp-cloud-run-provisioning map, the
  * "how do I go from zero to CI auto-deploy" follow-on). The {@see Destination} interface and its
  * adapters remain consumer-instantiable directly, unchanged; this binding is a convenience for the
@@ -25,10 +25,10 @@ class BeamProvisionServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__.'/../config/beam-provision.php', 'beam-provision');
+        $this->mergeConfigFrom(__DIR__.'/../config/beam/provision.php', 'beam.provision');
 
         $this->app->singleton(CloudRunDestination::class, function ($app) {
-            $config = $app['config']->get('beam-provision');
+            $config = $app['config']->get('beam.provision');
             $modulesDir = TofuModulesPath::dir();
 
             $tofu = new TofuApplyDispatcher(
@@ -57,7 +57,7 @@ class BeamProvisionServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->publishes([
-                __DIR__.'/../config/beam-provision.php' => config_path('beam-provision.php'),
+                __DIR__.'/../config/beam/provision.php' => config_path('beam/provision.php'),
             ], 'beam-provision-config');
 
             $this->commands([
