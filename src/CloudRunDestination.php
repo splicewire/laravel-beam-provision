@@ -91,6 +91,9 @@ class CloudRunDestination implements Destination
                 url: $applyResult->outputs['service_url']['value'] ?? null,
                 status: 'provisioned',
                 raw: $applyResult->outputs ?? [],
+                // Carried, never inferred: whether the apply's Grant was enforced is a fact about
+                // the Runner the host bound, and only the Runner knows it.
+                sandboxed: $applyResult->sandboxed,
             );
         } catch (Throwable $e) {
             ProvisionFailed::dispatch(static::class, $repoRef, $e);

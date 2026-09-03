@@ -59,3 +59,28 @@ it('fails fast without a token', function () {
         'image' => 'us-central1-docker.pkg.dev/splicewire/beam/pilot:abc123',
     ])->assertExitCode(1);
 });
+
+it('warns the operator when the apply ran with an advisory Grant, and stays silent when it did not', function (?bool $sandboxed, bool $expectWarning) {
+    $destination = Mockery::mock(CloudRunDestination::class);
+    $destination->shouldReceive('provision')
+        ->once()
+        ->andReturn(new ProvisionResult(appId: 'x', url: 'https://x.run.app', status: 'provisioned', sandboxed: $sandboxed));
+
+    $this->app->instance(CloudRunDestination::class, $destination);
+
+    $command = $this->artisan('splicewire:beam:provision', [
+        'domain' => 'pilot.example.com',
+        'image' => 'us-central1-docker.pkg.dev/splicewire/beam/pilot:abc123',
+        '--token' => 'a-token',
+    ]);
+
+    $expectWarning
+        ? $command->expectsOutputToContain('UNSANDBOXED')
+        : $command->doesntExpectOutputToContain('UNSANDBOXED');
+
+    $command->assertExitCode(0);
+})->with([
+    'advisory Grant — the operator must be told' => [false, true],
+    'enforced by a real substrate' => [true, false],
+    'not a Runner-backed destination at all' => [null, false],
+]);

@@ -20,7 +20,19 @@ final readonly class TofuApplyResult
         public ?array $changeSummary,
         public ?array $outputs,
         public PopcornResult $popcornResult,
+        public bool $sandboxed = false,
     ) {}
+
+    /**
+     * True when the isolation this run *asked* for was not actually enforced by the Runner that
+     * served it — the requested Grant was a wish, not a policy. Callers that provision on behalf
+     * of arbitrary input must treat an advisory result as unfit for that use; a single pre-agreed
+     * tenant (the pilot) may proceed on it deliberately.
+     */
+    public function isAdvisory(): bool
+    {
+        return ! $this->sandboxed;
+    }
 
     /** Whether this run changed nothing — the idempotent-reapply check ticket 09 requires. */
     public function isNoOp(): bool
@@ -37,7 +49,7 @@ final readonly class TofuApplyResult
     public static function fromPopcornResult(PopcornResult $result): self
     {
         if (! $result->successful()) {
-            return new self(successful: false, changeSummary: null, outputs: null, popcornResult: $result);
+            return new self(successful: false, changeSummary: null, outputs: null, popcornResult: $result, sandboxed: $result->sandboxed);
         }
 
         $decoded = $result->output();
@@ -47,6 +59,7 @@ final readonly class TofuApplyResult
             changeSummary: $decoded['changeSummary'] ?? null,
             outputs: $decoded['outputs'] ?? null,
             popcornResult: $result,
+            sandboxed: $result->sandboxed,
         );
     }
 }

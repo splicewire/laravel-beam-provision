@@ -3,6 +3,7 @@
 namespace Splicewire\Beam\Provision;
 
 use Illuminate\Support\ServiceProvider;
+use Rushing\Popcorn\Contracts\Runner;
 use Rushing\Popcorn\Laravel\Runner\NullRunner;
 use Splicewire\Beam\Provision\Console\ProvisionCommand;
 use Splicewire\Beam\Provision\Tofu\CabTokenMinter;
@@ -32,7 +33,14 @@ class BeamProvisionServiceProvider extends ServiceProvider
             $modulesDir = TofuModulesPath::dir();
 
             $tofu = new TofuApplyDispatcher(
-                runner: new NullRunner,
+                // The isolation backend is a **binding swap, never a caller change** — the whole
+                // point of routing the apply through a `RunnerInvocable`. A host that installs a
+                // real substrate (bwrap via `laravel-popcorn-bubble`, or a Cloud Run Jobs Runner)
+                // binds `Runner::class` and this package needs no edit. Unbound, the honest local
+                // fallback is `NullRunner`: it really runs `tofu`, it just enforces nothing — and
+                // it says so, via `Result::$sandboxed` → `TofuApplyResult::isAdvisory()` →
+                // `ProvisionResult::$sandboxed`.
+                runner: $app->bound(Runner::class) ? $app->make(Runner::class) : new NullRunner,
                 tokenMinter: new CabTokenMinter,
                 stateBucket: $config['state_bucket'],
                 modulesDir: $modulesDir,

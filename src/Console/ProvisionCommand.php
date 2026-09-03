@@ -62,6 +62,14 @@ class ProvisionCommand extends Command
         $this->info("Provisioned: {$result->appId}");
         $this->info("URL: {$result->url}");
 
+        if ($result->sandboxed === false) {
+            // Not decoration. `tofu apply` holds a broad provider credential and shells real
+            // network calls; under an unbound Runner the Grant that scopes it is advisory only.
+            // An operator reading "Provisioned" must not have to know which Runner was bound to
+            // learn that.
+            $this->warn('Apply ran UNSANDBOXED: no isolation backend is bound, so the effective Grant was advisory, not enforced. Bind Rushing\Popcorn\Contracts\Runner to a real substrate before provisioning on behalf of untrusted input.');
+        }
+
         return self::SUCCESS;
     }
 
