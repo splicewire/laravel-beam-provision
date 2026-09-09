@@ -11,25 +11,38 @@ set -e
 #
 #     php artisan vendor:publish --tag=beam-provision-docker
 #
-# ── Roles ──────────────────────────────────────────────────────────────────────────────────────────
+# ── One axis: the role ─────────────────────────────────────────────────────────────────────────────
 #
-#   APP_ROLE=web      (default) serve requests
-#   APP_ROLE=migrate            run migrations and exit — for a deploy step or a Cloud Run job
+#   standalone  (default) migrate, then serve — one container does everything
+#   web                   serve only; REFUSE TO START if migrations are pending
+#   migrate               migrate and exit — a deploy step or a Cloud Run job
 #
-# ── Migrations on boot ─────────────────────────────────────────────────────────────────────────────
+#     docker run <image> migrate          # preferred: the container-native form
+#     APP_ROLE=migrate                    # fallback, for a platform that cannot set args
 #
-#   MIGRATE_ON_BOOT=true   (default) the web role migrates before serving
-#   MIGRATE_ON_BOOT=false            the web role REFUSES TO START if migrations are pending
+# Each value names a DEPLOYMENT POSTURE, which is a real thing a deploy already has to decide (is this
+# the service or the job?). An earlier draft of this file split it into `APP_ROLE` plus a
+# `MIGRATE_ON_BOOT` boolean — two axes for one decision, which made
+# `APP_ROLE=web MIGRATE_ON_BOOT=true` a legal spelling of `standalone` and left the reader to work out
+# that four combinations describe three postures. One axis cannot express the contradiction.
 #
-# The default is `true` so a freshly cut host boots and works with no deploy pipeline in place. That
-# is the honest default for a starter, not an endorsement: under a runtime where boot is frequent and
-# concurrent (Cloud Run), every cold start pays a migration pass and N scaling instances race the same
-# migrations, with the cost growing per tenant until it exceeds the startup-probe budget.
+# **The positional argument is the primary form.** It is how well-built images do this
+# (`docker run postgres initdb`), it shows up in a deploy config as `args` rather than as ambient
+# state, and nothing can leave it set by accident. `APP_ROLE` exists only because
+# `laravel-beam-provision`'s own Cloud Run module declares 15 variables and **none of them is
+# `command`/`args`** (measured 2026-09-09) — so today the estate's deploy path can reach an env var and
+# cannot reach an argument. When that module grows `args`, hosts move over with no change to this file.
 #
-# A host with somewhere to run the migrate role should set `MIGRATE_ON_BOOT=false`. That path does not
-# merely skip migrating — it asserts nothing is pending and **refuses to serve** otherwise, so a deploy
-# that forgets the migrate step is a loud failed deploy rather than a quiet stale-schema one. The check
-# is a read-only status query, so cold-starting instances CHECK concurrently where they used to RACE.
+# `standalone` is the default because a freshly cut host has no deploy pipeline to run the migrate
+# role, and a default that fails on first deploy is not a default. It is not an endorsement: under a
+# runtime where boot is frequent and concurrent, every cold start pays a migration pass and N scaling
+# instances race the same migrations, with the cost growing per tenant until it exceeds the
+# startup-probe budget.
+#
+# `web` does not merely skip migrating — it asserts nothing is pending and refuses to serve otherwise,
+# so a deploy that forgets the migrate role is a loud failed deploy rather than a quiet stale-schema
+# one. The check is a read-only status query, so cold-starting instances CHECK concurrently where
+# `standalone` has them RACE to write.
 #
 # Central only in that check, deliberately: a per-tenant status sweep would reintroduce the
 # cost-scales-with-tenants problem on every boot. Tenant drift is the migrate role's business.
@@ -65,29 +78,31 @@ run_migrations() {
   fi
 }
 
-APP_ROLE="${APP_ROLE:-web}"
-MIGRATE_ON_BOOT="${MIGRATE_ON_BOOT:-true}"
+# Argument first, env second, default last — see the header for why both exist.
+ROLE="${1:-${APP_ROLE:-standalone}}"
 
-case "$APP_ROLE" in
+case "$ROLE" in
   migrate)
     echo "[entrypoint] role=migrate"
     run_migrations
     echo "[entrypoint] migrations complete"
     exit 0
     ;;
+  standalone)
+    run_migrations
+    ;;
   web)
-    if [ "$MIGRATE_ON_BOOT" = "true" ]; then
-      run_migrations
-    elif ! php artisan migrate:status --pending --no-interaction >/dev/null 2>&1; then
-      echo "[entrypoint] FATAL: central migrations are pending and MIGRATE_ON_BOOT=false." >&2
-      echo "[entrypoint] Run this image with APP_ROLE=migrate before shifting traffic." >&2
+    if ! php artisan migrate:status --pending --no-interaction >/dev/null 2>&1; then
+      echo "[entrypoint] FATAL: central migrations are pending and role=web does not migrate." >&2
+      echo "[entrypoint] Run this image as 'migrate' before shifting traffic, or use role=standalone." >&2
       exit 1
     fi
     ;;
   *)
-    # An unrecognised role must not fall through to `web`. An omission and a decision must not be
-    # spelled identically.
-    echo "[entrypoint] FATAL: unknown APP_ROLE '$APP_ROLE' (expected: web, migrate)" >&2
+    # An unrecognised role must not fall through to a default. An omission and a decision must not be
+    # spelled identically — and here a wrong guess is either a container that will not migrate or one
+    # that migrates when it should not.
+    echo "[entrypoint] FATAL: unknown role '$ROLE' (expected: standalone, web, migrate)" >&2
     exit 1
     ;;
 esac

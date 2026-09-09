@@ -60,14 +60,35 @@ it('binds the port the platform assigns', function () {
     expect(entrypointStubCode())->toContain('${PORT:-8080}');
 });
 
-it('boots and works out of the box — migrations run by default', function () {
-    // The honest default for a starter: a freshly cut host has no deploy pipeline to run a migrate
-    // role, so a default of `false` would make its first deploy fail by design.
-    expect(entrypointStubCode())->toContain('MIGRATE_ON_BOOT:-true}');
+it('boots and works out of the box — standalone is the default role', function () {
+    // A freshly cut host has no deploy pipeline to run the migrate role, and a default that fails on
+    // first deploy is not a default.
+    expect(entrypointStubCode())->toContain('${APP_ROLE:-standalone}');
 });
 
-it('refuses to serve a stale schema when migrations are moved off the boot path', function () {
-    // The half that makes MIGRATE_ON_BOOT=false safe. Skipping migrations without this would let a
+it('takes the role as an argument first and an env var second', function () {
+    // The positional form is primary — it is container-native (`docker run <image> migrate`), it shows
+    // up in a deploy config as `args` rather than as ambient state, and nothing can leave it set by
+    // accident. APP_ROLE exists only because this package's own Cloud Run module declares no
+    // command/args, so today the deploy path can reach an env var and cannot reach an argument.
+    expect(entrypointStubCode())->toContain('ROLE="${1:-${APP_ROLE:-standalone}}"');
+});
+
+it('expresses the three postures on ONE axis, with no boolean second axis', function () {
+    $code = entrypointStubCode();
+
+    // An earlier draft had APP_ROLE plus a MIGRATE_ON_BOOT boolean: two axes for one decision, which
+    // made `APP_ROLE=web MIGRATE_ON_BOOT=true` a legal spelling of standalone. Four combinations
+    // describing three postures is a contradiction the reader has to resolve; one axis cannot express
+    // it. This asserts the second axis has not crept back.
+    expect($code)->not->toContain('MIGRATE_ON_BOOT')
+        ->and($code)->toContain('standalone)')
+        ->and($code)->toContain('web)')
+        ->and($code)->toContain('migrate)');
+});
+
+it('refuses to serve a stale schema in the web role', function () {
+    // The half that makes a non-migrating role safe. Skipping migrations without this would let a
     // deploy that forgot the migrate role serve a stale schema silently.
     $code = entrypointStubCode();
 
@@ -75,9 +96,10 @@ it('refuses to serve a stale schema when migrations are moved off the boot path'
         ->and($code)->toContain('exit 1');
 });
 
-it('rejects an unknown role rather than falling through to web', function () {
-    // An omission and a decision must not be spelled identically.
-    expect(entrypointStub())->toContain('unknown APP_ROLE');
+it('rejects an unknown role rather than falling through to a default', function () {
+    // An omission and a decision must not be spelled identically — and here a wrong guess is either a
+    // container that will not migrate or one that migrates when it should not.
+    expect(entrypointStub())->toContain('unknown role');
 });
 
 it('guards tenants:migrate rather than assuming a tenancy layer', function () {
