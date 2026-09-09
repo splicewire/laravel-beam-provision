@@ -68,6 +68,23 @@ class BeamProvisionServiceProvider extends ServiceProvider
                 __DIR__.'/../config/beam/provision.php' => config_path('beam/provision.php'),
             ], 'beam-provision-config');
 
+            // The container entrypoint. Published here rather than hand-copied per host because this
+            // package owns the Cloud Run deploy contract the entrypoint is the other half of.
+            //
+            // ⚠️ It exists because three copies happened to agree and nothing kept them agreeing:
+            // measured 2026-09-09, all three starters' `docker/entrypoint.sh` were byte-identical
+            // (md5 304eb9c9…) and all three ran `exec php artisan serve` — the single-threaded dev
+            // server — in production. Every host cut from a starter inherited it.
+            //
+            // Published, not vendored, deliberately: a host may need to edit its own boot sequence, and
+            // a file it cannot edit would be worked around rather than used. The cost is that a
+            // published copy can drift from this stub, which is what
+            // `PublishedMigrationDriftAudit` already reports for migrations — byte-compare before
+            // assuming a divergence is staleness rather than a deliberate host edit.
+            $this->publishes([
+                __DIR__.'/../resources/docker/entrypoint.sh.stub' => base_path('docker/entrypoint.sh'),
+            ], 'beam-provision-docker');
+
             $this->commands([
                 ProvisionCommand::class,
             ]);

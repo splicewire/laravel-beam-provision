@@ -1,0 +1,124 @@
+#!/bin/sh
+set -e
+
+# The Beam family's container entrypoint — published from `splicewire/laravel-beam-provision`, which
+# owns the Cloud Run deploy contract this file is the other half of.
+#
+# ⚠️ Published, not vendored: this becomes a real file in the host's repo and the host may edit it.
+# It carries a source of truth so the three starters stop being three hand-maintained copies that
+# happen to agree — measured 2026-09-09, all three were byte-identical (md5 304eb9c9…) with nothing
+# keeping them that way.
+#
+#     php artisan vendor:publish --tag=beam-provision-docker
+#
+# ── Roles ──────────────────────────────────────────────────────────────────────────────────────────
+#
+#   APP_ROLE=web      (default) serve requests
+#   APP_ROLE=migrate            run migrations and exit — for a deploy step or a Cloud Run job
+#
+# ── Migrations on boot ─────────────────────────────────────────────────────────────────────────────
+#
+#   MIGRATE_ON_BOOT=true   (default) the web role migrates before serving
+#   MIGRATE_ON_BOOT=false            the web role REFUSES TO START if migrations are pending
+#
+# The default is `true` so a freshly cut host boots and works with no deploy pipeline in place. That
+# is the honest default for a starter, not an endorsement: under a runtime where boot is frequent and
+# concurrent (Cloud Run), every cold start pays a migration pass and N scaling instances race the same
+# migrations, with the cost growing per tenant until it exceeds the startup-probe budget.
+#
+# A host with somewhere to run the migrate role should set `MIGRATE_ON_BOOT=false`. That path does not
+# merely skip migrating — it asserts nothing is pending and **refuses to serve** otherwise, so a deploy
+# that forgets the migrate step is a loud failed deploy rather than a quiet stale-schema one. The check
+# is a read-only status query, so cold-starting instances CHECK concurrently where they used to RACE.
+#
+# Central only in that check, deliberately: a per-tenant status sweep would reintroduce the
+# cost-scales-with-tenants problem on every boot. Tenant drift is the migrate role's business.
+
+# Cloud SQL's Auth Proxy exposes the database at /cloudsql/<connection_name> (a Unix socket, addressed
+# via a bare socket-directory `host`). This is where that one JSON secret becomes the DB_* env vars
+# Laravel's stock pgsql connection reads — never a plaintext per-field secret output.
+if [ -n "$DB_CREDENTIALS_JSON" ]; then
+  eval "$(php -r '
+    $c = json_decode(getenv("DB_CREDENTIALS_JSON"), true);
+    foreach ([
+        "DB_HOST" => "/cloudsql/" . $c["connection_name"],
+        "DB_PORT" => "5432",
+        "DB_DATABASE" => $c["database"],
+        "DB_USERNAME" => $c["username"],
+        "DB_PASSWORD" => $c["password"],
+    ] as $k => $v) {
+        printf("export %s=%s\n", $k, escapeshellarg($v));
+    }
+  ')"
+fi
+
+# `tenants:migrate` is guarded rather than assumed: it arrives with the tenancy layer, and a host
+# without one must not fail on a command it never installed. Probed against the command list, because
+# `artisan help <unknown>` exits 0 and cannot distinguish a missing command from a present one.
+run_migrations() {
+  php artisan migrate --force --no-interaction
+
+  if php artisan list --raw 2>/dev/null | grep -qE '^tenants:migrate\b'; then
+    php artisan tenants:migrate --force --no-interaction
+  else
+    echo "[entrypoint] no tenants:migrate — skipping (no tenancy layer installed)"
+  fi
+}
+
+APP_ROLE="${APP_ROLE:-web}"
+MIGRATE_ON_BOOT="${MIGRATE_ON_BOOT:-true}"
+
+case "$APP_ROLE" in
+  migrate)
+    echo "[entrypoint] role=migrate"
+    run_migrations
+    echo "[entrypoint] migrations complete"
+    exit 0
+    ;;
+  web)
+    if [ "$MIGRATE_ON_BOOT" = "true" ]; then
+      run_migrations
+    elif ! php artisan migrate:status --pending --no-interaction >/dev/null 2>&1; then
+      echo "[entrypoint] FATAL: central migrations are pending and MIGRATE_ON_BOOT=false." >&2
+      echo "[entrypoint] Run this image with APP_ROLE=migrate before shifting traffic." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    # An unrecognised role must not fall through to `web`. An omission and a decision must not be
+    # spelled identically.
+    echo "[entrypoint] FATAL: unknown APP_ROLE '$APP_ROLE' (expected: web, migrate)" >&2
+    exit 1
+    ;;
+esac
+
+# ⚠️ NOT `artisan serve`. That is Laravel's SINGLE-THREADED development server: with container
+# concurrency above 1, requests queue head-of-line and one instance serves one request at a time
+# regardless of what the service is configured for. All three starters shipped it until 2026-09-09,
+# so every host cut from them inherited it.
+#
+# ⚠️ Two prerequisites, both of which fail silently if skipped:
+#
+#   1. `config/octane.php` must pin the SAME server this execs. `~/Herd/prognosix-api` is the estate's
+#      cautionary case — its config says roadrunner while its Dockerfile runs frankenphp; nothing
+#      errors, and the config answers "what serves this host" incorrectly forever.
+#   2. The Dockerfile must run `php artisan octane:install --server=frankenphp` at BUILD time.
+#      Fetching the binary on first use puts a network round-trip inside the cold-start budget and
+#      fails outright where egress is restricted.
+#
+# ⚠️ And one that fails silently AND dangerously: a worker's connection outlives the request. Where
+# tenancy is a Postgres `search_path` swap, the next request inherits the previous tenant's schema and
+# resolves against another tenant's rows with no error. `splicewire/laravel-beam-tenancy` ships
+# `EndTenancyOnTerminate` for exactly this; a host that installs tenancy must have it.
+#
+# `exec` so the server is PID 1 and receives SIGTERM directly, rather than a shell swallowing it and
+# letting in-flight requests die at the grace deadline.
+#
+# Workers default to one per CPU, left implicit: the platform's CPU allocation is the authority, and a
+# number hard-coded here would be wrong on the first instance-type change.
+exec php artisan octane:start \
+    --server=frankenphp \
+    --host=0.0.0.0 \
+    --port="${PORT:-8080}" \
+    ${OCTANE_WORKERS:+--workers="${OCTANE_WORKERS}"} \
+    ${OCTANE_MAX_REQUESTS:+--max-requests="${OCTANE_MAX_REQUESTS}"}
