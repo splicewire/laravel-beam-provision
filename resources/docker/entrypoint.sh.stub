@@ -92,7 +92,9 @@ case "$ROLE" in
     run_migrations
     ;;
   web)
-    if ! php artisan migrate:status --pending --no-interaction >/dev/null 2>&1; then
+    # `--pending=1`, never a bare `--pending`: the option is VALUE_OPTIONAL with default false, so the bare flag reads as
+    # null and migrate:status exits 0 even with migrations pending (Laravel 12.71 / 13.x StatusCommand :87-88, :137).
+    if ! php artisan migrate:status --pending=1 --no-interaction >/dev/null 2>&1; then
       echo "[entrypoint] FATAL: central migrations are pending and role=web does not migrate." >&2
       echo "[entrypoint] Run this image as 'migrate' before shifting traffic, or use role=standalone." >&2
       exit 1

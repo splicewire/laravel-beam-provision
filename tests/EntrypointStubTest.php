@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\Artisan;
 use Splicewire\Beam\Provision\BeamProvisionServiceProvider;
 
 /**
@@ -94,6 +95,35 @@ it('refuses to serve a stale schema in the web role', function () {
 
     expect($code)->toContain('migrate:status --pending')
         ->and($code)->toContain('exit 1');
+});
+
+/** The web guard's migrate:status arguments, exactly as the stub's code passes them. */
+function webGuardStatusArguments(): string
+{
+    preg_match('/web\)\s.*?php artisan migrate:status ([^>]*?)\s*>/s', entrypointStubCode(), $m);
+    expect($m[1] ?? null)->not->toBeNull('the web role runs no migrate:status guard');
+
+    return $m[1];
+}
+
+it('the web guard EXITS NON-ZERO while a migration is pending and 0 when none is (launch ticket 45)', function () {
+    // The guard's own arguments, parsed as a command line (as the shell hands them over: a bare `--pending` is null),
+    // through the framework's real migrate:status. A bare `--pending` exits 0 with migrations pending: the guard guards
+    // nothing (VALUE_OPTIONAL, default false; StatusCommand :87-88, :137).
+    $dir = sys_get_temp_dir().'/beam-provision-t45-'.bin2hex(random_bytes(4));
+    mkdir($dir);
+    file_put_contents($dir.'/2026_11_12_000000_t45_probe.php', "<?php\nuse Illuminate\\Database\\Migrations\\Migration;\nuse Illuminate\\Support\\Facades\\Schema;\nreturn new class extends Migration { public function up(): void { Schema::create('t45_probe', fn (\$t) => \$t->id()); } };\n");
+    app('migrator')->path($dir);
+    $guard = 'migrate:status '.webGuardStatusArguments();
+
+    expect(Artisan::call('migrate:install'))->toBe(0);
+    expect(Artisan::call($guard))->not->toBe(0, "`{$guard}` passed with a migration pending: the web role would serve a stale schema");
+
+    expect(Artisan::call('migrate', ['--force' => true]))->toBe(0);
+    expect(Artisan::call($guard))->toBe(0, "`{$guard}` refused with nothing pending");
+
+    array_map('unlink', glob($dir.'/*'));
+    rmdir($dir);
 });
 
 it('rejects an unknown role rather than falling through to a default', function () {
